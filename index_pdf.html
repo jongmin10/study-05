@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF AI 요약기</title>
+  <!-- pdf.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #f4f6f9;
+      --surface:     #ffffff;
+      --border:      #dde2ea;
+      --accent:      #4f7ef8;
+      --accent-dark: #3563d6;
+      --text:        #1a2233;
+      --text-mid:    #4a5568;
+      --text-soft:   #718096;
+      --error-bg:    #fff5f5;
+      --error-border:#fc8181;
+      --error-text:  #c53030;
+      --success-bg:  #f0fff4;
+      --success-border:#68d391;
+      --radius:      10px;
+      --shadow:      0 2px 12px rgba(79,126,248,0.08);
+    }
+
+    body {
+      font-family: 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 40px 16px 80px;
+    }
+
+    /* ── 레이아웃 ── */
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* ── 헤더 ── */
+    .app-header {
+      text-align: center;
+      padding-bottom: 8px;
+    }
+
+    .app-header h1 {
+      font-size: clamp(1.6rem, 4vw, 2.2rem);
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+
+    .app-header p {
+      font-size: 0.95rem;
+      color: var(--text-soft);
+      margin-top: 8px;
+    }
+
+    /* ── 카드 공통 ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px;
+    }
+
+    .card-title {
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+      margin-bottom: 14px;
+    }
+
+    /* ── API 키 입력 ── */
+    .api-key-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .api-key-input {
+      flex: 1;
+      padding: 11px 14px;
+      font-size: 0.92rem;
+      font-family: 'Consolas', 'Menlo', monospace;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .api-key-input:focus {
+      border-color: var(--accent);
+    }
+
+    .api-key-input.valid   { border-color: #68d391; }
+    .api-key-input.invalid { border-color: var(--error-border); }
+
+    .btn {
+      padding: 11px 20px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+    .btn:active:not(:disabled) { transform: translateY(0); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-secondary {
+      background: var(--bg);
+      color: var(--text-mid);
+      border: 1px solid var(--border);
+    }
+
+    .key-status {
+      margin-top: 8px;
+      font-size: 0.82rem;
+      min-height: 18px;
+    }
+
+    .key-status.ok  { color: #2f855a; }
+    .key-status.err { color: var(--error-text); }
+
+    /* ── PDF 업로드 ── */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(79,126,248,0.04);
+    }
+
+    .drop-icon {
+      font-size: 2.8rem;
+      margin-bottom: 12px;
+      display: block;
+    }
+
+    .drop-label {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-mid);
+    }
+
+    .drop-hint {
+      font-size: 0.82rem;
+      color: var(--text-soft);
+      margin-top: 6px;
+    }
+
+    #file-input { display: none; }
+
+    .file-info {
+      display: none;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 16px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-top: 14px;
+    }
+
+    .file-info.visible { display: flex; }
+
+    .file-icon { font-size: 1.8rem; }
+
+    .file-meta { flex: 1; }
+
+    .file-name {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 400px;
+    }
+
+    .file-size {
+      font-size: 0.78rem;
+      color: var(--text-soft);
+      margin-top: 2px;
+    }
+
+    /* ── 요약 버튼 ── */
+    #summarize-btn {
+      width: 100%;
+      padding: 14px;
+      font-size: 1rem;
+      border-radius: 8px;
+    }
+
+    /* ── 진행 상태 ── */
+    #progress-section {
+      display: none;
+    }
+
+    .progress-label {
+      font-size: 0.88rem;
+      color: var(--text-mid);
+      margin-bottom: 10px;
+    }
+
+    .progress-bar-wrap {
+      background: var(--bg);
+      border-radius: 100px;
+      height: 6px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), #818cf8);
+      border-radius: 100px;
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+
+    /* 스피너 */
+    .spinner-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
+      color: var(--text-soft);
+      font-size: 0.88rem;
+    }
+
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── 오류/성공 배너 ── */
+    .alert {
+      display: none;
+      padding: 14px 18px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+
+    .alert.error {
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      color: var(--error-text);
+    }
+
+    .alert.visible { display: block; }
+
+    /* ── 결과 영역 ── */
+    #result-section {
+      display: none;
+      animation: fade-up 0.45s ease both;
+    }
+
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    #summary-output {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 22px 24px;
+      font-size: 0.95rem;
+      line-height: 1.85;
+      color: var(--text-mid);
+      word-break: break-word;
+      min-height: 100px;
+    }
+
+    #summary-output h4 {
+      color: var(--text);
+      font-size: 0.98rem;
+    }
+
+    #summary-output ul {
+      list-style: disc;
+    }
+
+    #summary-output li {
+      margin-left: 4px;
+    }
+
+    #summary-output strong {
+      color: var(--text);
+    }
+
+    .result-meta {
+      margin-top: 10px;
+      font-size: 0.78rem;
+      color: var(--text-soft);
+      text-align: right;
+    }
+
+    /* ── 개인정보 주의 문구 ── */
+    .privacy-notice {
+      font-size: 0.75rem;
+      color: var(--text-soft);
+      text-align: center;
+      line-height: 1.6;
+      padding: 0 8px;
+    }
+
+    /* ── 푸터 ── */
+    .app-footer {
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--text-soft);
+      margin-top: 8px;
+    }
+
+    /* ── 반응형 ── */
+    @media (max-width: 520px) {
+      .card { padding: 20px 16px; }
+      .api-key-row { flex-direction: column; }
+      .file-name { max-width: 200px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- 헤더 -->
+  <header class="app-header">
+    <h1>PDF AI 요약기</h1>
+    <p>PDF 문서를 업로드하면 AI가 한국어로 요약해드립니다</p>
+  </header>
+
+  <!-- API 키 설정 -->
+  <section class="card" aria-label="API 키 설정">
+    <p class="card-title">OpenRouter API Key</p>
+    <div class="api-key-row">
+      <input
+        type="password"
+        id="api-key-input"
+        class="api-key-input"
+        placeholder="sk-or-v1-..."
+        autocomplete="off"
+        spellcheck="false"
+        aria-label="OpenRouter API 키 입력"
+      />
+      <button class="btn btn-primary" id="save-key-btn" type="button">저장</button>
+      <button class="btn btn-secondary" id="clear-key-btn" type="button">초기화</button>
+    </div>
+    <p class="key-status" id="key-status" aria-live="polite"></p>
+  </section>
+
+  <!-- PDF 업로드 -->
+  <section class="card" aria-label="PDF 파일 업로드">
+    <p class="card-title">PDF 파일 선택</p>
+
+    <div class="drop-zone" id="drop-zone" role="button" tabindex="0" aria-label="PDF 파일 드래그 앤 드롭 또는 클릭하여 선택">
+      <span class="drop-icon" aria-hidden="true">&#128196;</span>
+      <p class="drop-label">파일을 드래그하거나 클릭하여 업로드</p>
+      <p class="drop-hint">PDF 형식 · 최대 20 MB</p>
+    </div>
+    <input type="file" id="file-input" accept=".pdf,application/pdf" aria-hidden="true" />
+
+    <div class="file-info" id="file-info" aria-live="polite">
+      <span class="file-icon" aria-hidden="true">&#128196;</span>
+      <div class="file-meta">
+        <div class="file-name" id="file-name"></div>
+        <div class="file-size" id="file-size"></div>
+      </div>
+      <button class="btn btn-secondary" id="remove-file-btn" type="button" aria-label="파일 제거">제거</button>
+    </div>
+  </section>
+
+  <!-- 요약 실행 버튼 -->
+  <button class="btn btn-primary" id="summarize-btn" type="button" disabled aria-label="AI 요약 시작">
+    AI 요약 시작
+  </button>
+
+  <!-- 진행 상태 -->
+  <div id="progress-section" class="card" aria-live="polite" aria-label="진행 상태">
+    <p class="progress-label" id="progress-label">텍스트 추출 중...</p>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div class="spinner-row">
+      <div class="spinner" aria-hidden="true"></div>
+      <span id="progress-detail">잠시만 기다려 주세요</span>
+    </div>
+  </div>
+
+  <!-- 오류 표시 -->
+  <div class="alert error" id="error-alert" role="alert" aria-live="assertive"></div>
+
+  <!-- 요약 결과 -->
+  <section class="card" id="result-section" aria-label="요약 결과">
+    <div class="result-actions">
+      <button class="btn btn-secondary" id="copy-btn" type="button">복사</button>
+      <button class="btn btn-secondary" id="reset-btn" type="button">다시 요약</button>
+    </div>
+    <div id="summary-output" aria-label="요약 내용" role="region" tabindex="0"></div>
+    <p class="result-meta" id="result-meta"></p>
+  </section>
+
+  <!-- 개인정보 주의 문구 -->
+  <p class="privacy-notice">
+    &#9888;&#65039; PDF 내용은 AI 처리를 위해 OpenRouter API로 전송됩니다. 민감한 개인정보가 포함된 문서는 업로드하지 마세요.
+  </p>
+
+  <footer class="app-footer">
+    Powered by OpenRouter &middot; openrouter/free (자동 무료 모델 선택)
+  </footer>
+
+</div><!-- /.container -->
+
+<script>
+  // ── 설정 상수 ─────────────────────────────────────────────────────────────
+  const CONFIG = {
+    API_URL:         'https://openrouter.ai/api/v1/chat/completions',
+    MODEL:           'openrouter/free',
+    MAX_TEXT_LENGTH: 12000,
+    MAX_FILE_SIZE:   20 * 1024 * 1024, // 20 MB
+    MAX_TOKENS:      1024,
+    TEMPERATURE:     0.3,
+  };
+
+  // HTTP 상태 코드별 오류 메시지
+  const API_ERRORS = {
+    401: 'API 키가 올바르지 않습니다. API 키를 다시 확인해주세요.',
+    402: 'API 크레딧이 부족합니다. OpenRouter 계정을 확인해주세요.',
+    429: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.',
+    500: 'AI 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.',
+    503: 'AI 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.',
+  };
+
+  // 파일 관련 오류 메시지
+  const FILE_ERRORS = {
+    NOT_PDF:          'PDF 파일만 업로드할 수 있습니다.',
+    TOO_LARGE:        '파일 크기가 너무 큽니다. 20MB 이하의 파일을 사용해주세요.',
+    EMPTY:            '파일이 비어 있습니다. 다른 파일을 선택해주세요.',
+    EXTRACT_FAILED:   '텍스트를 추출할 수 없는 PDF입니다. 이미지 스캔본이나 보안 설정된 PDF는 지원하지 않습니다.',
+    PDFJS_LOAD_FAILED:'PDF 처리 라이브러리를 불러오지 못했습니다. 인터넷 연결 후 페이지를 새로고침해주세요.',
+  };
+
+  const STORAGE_KEY = 'openrouter_api_key';
+
+  // ── DOM 참조 ───────────────────────────────────────────────────────────────
+  const apiKeyInput     = document.getElementById('api-key-input');
+  const saveKeyBtn      = document.getElementById('save-key-btn');
+  const clearKeyBtn     = document.getElementById('clear-key-btn');
+  const keyStatus       = document.getElementById('key-status');
+  const dropZone        = document.getElementById('drop-zone');
+  const fileInput       = document.getElementById('file-input');
+  const fileInfo        = document.getElementById('file-info');
+  const fileName        = document.getElementById('file-name');
+  const fileSize        = document.getElementById('file-size');
+  const removeFileBtn   = document.getElementById('remove-file-btn');
+  const summarizeBtn    = document.getElementById('summarize-btn');
+  const progressSection = document.getElementById('progress-section');
+  const progressLabel   = document.getElementById('progress-label');
+  const progressBar     = document.getElementById('progress-bar');
+  const progressDetail  = document.getElementById('progress-detail');
+  const errorAlert      = document.getElementById('error-alert');
+  const resultSection   = document.getElementById('result-section');
+  const summaryOutput   = document.getElementById('summary-output');
+  const resultMeta      = document.getElementById('result-meta');
+  const copyBtn         = document.getElementById('copy-btn');
+  const resetBtn        = document.getElementById('reset-btn');
+
+  // ── 상태 ──────────────────────────────────────────────────────────────────
+  let selectedFile = null;
+
+  // ── pdf.js 워커 설정 ──────────────────────────────────────────────────────
+  // CDN 버전과 워커 버전을 일치시킴
+  if (typeof pdfjsLib !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  // =========================================================================
+  // 1. API 키 관리: saveApiKey / loadApiKey
+  // =========================================================================
+
+  /**
+   * API 키를 형식 검증 후 localStorage에 저장한다.
+   * @param {string} key - OpenRouter API 키
+   * @throws {Error} 형식이 올바르지 않을 때
+   */
+  function saveApiKey(key) {
+    const trimmed = (key || '').trim();
+    if (!trimmed.startsWith('sk-or-')) {
+      throw new Error("API 키는 'sk-or-' 로 시작해야 합니다.");
+    }
+    localStorage.setItem(STORAGE_KEY, trimmed);
+  }
+
+  /**
+   * localStorage에서 저장된 API 키를 반환한다.
+   * @returns {string|null}
+   */
+  function loadApiKey() {
+    return localStorage.getItem(STORAGE_KEY) || null;
+  }
+
+  // =========================================================================
+  // 2. 마크다운 렌더링 헬퍼
+  // =========================================================================
+
+  /**
+   * HTML 특수문자를 이스케이프하여 XSS를 방지한다.
+   * @param {string} text - 원본 텍스트
+   * @returns {string}
+   */
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /**
+   * 이스케이프 처리된 텍스트를 기본 마크다운 규칙에 따라 HTML로 변환한다.
+   * 지원: **bold**, # 제목(h4), - / * / • 목록, 빈 줄 단락, 줄 바꿈
+   * @param {string} text - 요약 결과 원문
+   * @returns {string} - 렌더링된 HTML 문자열
+   */
+  function renderMarkdown(text) {
+    const escaped = escapeHtml(text);
+    let html = escaped
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/^#{1,3}\s+(.+)$/gm, '<h4 style="margin:12px 0 6px;color:var(--text)">$1</h4>')
+      .replace(/^[-*•]\s+(.+)$/gm, '<li>$1</li>');
+
+    // 연속된 li 항목들을 하나의 ul로 묶기
+    html = html.replace(/(<li>.*?<\/li>\n?)+/gs, (match) => {
+      return `<ul style="margin:8px 0 8px 20px;padding:0;list-style:disc">${match}</ul>`;
+    });
+
+    html = html
+      .replace(/\n\n+/g, '</p><p style="margin:10px 0">')
+      .replace(/\n/g, '<br>');
+
+    return html;
+  }
+
+  // =========================================================================
+  // 3. AI 요약: summarizeWithAI(extractedText, apiKey)
+  // =========================================================================
+
+  /**
+   * OpenRouter API를 호출해 텍스트를 한국어로 요약한다.
+   * @param {string} extractedText - PDF에서 추출한 원문 텍스트
+   * @param {string} apiKey        - OpenRouter API 키
+   * @returns {Promise<string>}    - 요약 결과 문자열
+   */
+  async function summarizeWithAI(extractedText, apiKey) {
+    // 12,000자 초과분은 자른다 (토큰 한도 보호)
+    const truncated = extractedText.slice(0, CONFIG.MAX_TEXT_LENGTH);
+
+    const systemPrompt =
+      '당신은 문서 요약 전문가입니다. ' +
+      '사용자가 제공하는 PDF 문서의 텍스트를 한국어로 명확하고 간결하게 요약해주세요. ' +
+      '요약은 다음 구조로 작성하세요:\n' +
+      '1. 핵심 주제 (1-2문장)\n' +
+      '2. 주요 내용 (bullet point 3-5개)\n' +
+      '3. 결론 및 시사점 (1-2문장)';
+
+    const userMessage = `다음 PDF 문서를 요약해주세요:\n\n${truncated}`;
+
+    let response;
+    try {
+      response = await fetch(CONFIG.API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization':  `Bearer ${apiKey}`,
+          'Content-Type':   'application/json',
+          'HTTP-Referer':   '',
+          'X-Title':        'PDF AI Summarizer',
+        },
+        body: JSON.stringify({
+          model:       CONFIG.MODEL,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userMessage  },
+          ],
+          max_tokens:  CONFIG.MAX_TOKENS,
+          temperature: CONFIG.TEMPERATURE,
+        }),
+      });
+    } catch (networkErr) {
+      throw new Error(`네트워크 오류: 인터넷 연결을 확인해주세요. (${networkErr.message})`);
+    }
+
+    // HTTP 오류 처리 — 상태 코드별 사용자 친화적 메시지
+    if (!response.ok) {
+      const msg = API_ERRORS[response.status];
+      if (msg) {
+        throw new Error(msg);
+      }
+      let detail = response.statusText;
+      try {
+        const errBody = await response.json();
+        detail = errBody?.error?.message || JSON.stringify(errBody);
+      } catch (_) { /* 파싱 실패 시 statusText 사용 */ }
+      throw new Error(`API 오류 (${response.status}): ${detail}`);
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseErr) {
+      throw new Error(`API 응답 파싱 오류: ${parseErr.message}`);
+    }
+
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('AI 응답을 받지 못했습니다. 잠시 후 다시 시도해주세요.');
+    }
+
+    return content;
+  }
+
+  // =========================================================================
+  // 4. PDF 텍스트 추출: extractTextFromPDF(file, onProgress)
+  // =========================================================================
+
+  /**
+   * pdf.js를 사용해 PDF 파일에서 텍스트를 추출한다.
+   * @param {File}     file        - 사용자가 선택한 PDF 파일
+   * @param {Function} onProgress  - (current, total) 콜백 (페이지 진행률)
+   * @returns {Promise<string>}    - 전체 페이지를 이어 붙인 텍스트
+   */
+  async function extractTextFromPDF(file, onProgress) {
+    if (typeof pdfjsLib === 'undefined') {
+      throw new Error(FILE_ERRORS.PDFJS_LOAD_FAILED);
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+
+    let pdf;
+    try {
+      pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    } catch (pdfErr) {
+      throw new Error(FILE_ERRORS.EXTRACT_FAILED);
+    }
+
+    const totalPages = pdf.numPages;
+    const pageTexts  = [];
+
+    for (let i = 1; i <= totalPages; i++) {
+      const page    = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const text    = content.items.map(item => item.str).join(' ');
+      pageTexts.push(text);
+      if (onProgress) onProgress(i, totalPages);
+    }
+
+    return pageTexts.filter(t => t.trim()).join('\n');
+  }
+
+  // =========================================================================
+  // UI 헬퍼
+  // =========================================================================
+
+  /** 파일 크기를 사람이 읽기 쉬운 문자열로 변환 */
+  function formatBytes(bytes) {
+    if (bytes < 1024)        return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  /** 오류 메시지 표시 */
+  function showError(msg) {
+    errorAlert.textContent = msg;
+    errorAlert.classList.add('visible');
+    progressSection.style.display = 'none';
+  }
+
+  /** 오류 숨김 */
+  function clearError() {
+    errorAlert.textContent = '';
+    errorAlert.classList.remove('visible');
+  }
+
+  /** 진행 상태 업데이트 */
+  function setProgress(pct, label, detail) {
+    progressBar.style.width    = `${pct}%`;
+    progressLabel.textContent  = label  || '';
+    progressDetail.textContent = detail || '';
+  }
+
+  /** 현재 선택된 파일을 화면에 표시 */
+  function renderFileInfo(file) {
+    fileName.textContent   = file.name;
+    fileSize.textContent   = formatBytes(file.size);
+    fileInfo.classList.add('visible');
+    dropZone.style.display = 'none';
+    updateSummarizeBtn();
+  }
+
+  /** 파일 선택 초기화 */
+  function clearFile() {
+    selectedFile           = null;
+    fileInfo.classList.remove('visible');
+    dropZone.style.display = '';
+    fileInput.value        = '';
+    updateSummarizeBtn();
+  }
+
+  /** 요약 버튼 활성화 여부 갱신 */
+  function updateSummarizeBtn() {
+    const hasFile = !!selectedFile;
+    const hasKey  = !!(loadApiKey());
+    summarizeBtn.disabled = !(hasFile && hasKey);
+  }
+
+  /** 파일 유효성 검사 — 오류 시 메시지 반환, 정상이면 null */
+  function validateFile(file) {
+    if (!file) return '파일을 선택해주세요.';
+    if (file.type !== 'application/pdf' && !file.name.endsWith('.pdf')) {
+      return FILE_ERRORS.NOT_PDF;
+    }
+    if (file.size > CONFIG.MAX_FILE_SIZE) {
+      return FILE_ERRORS.TOO_LARGE;
+    }
+    if (file.size === 0) {
+      return FILE_ERRORS.EMPTY;
+    }
+    return null;
+  }
+
+  /** 파일 선택 처리 (input change / drop 공용) */
+  function handleFileSelect(file) {
+    clearError();
+    const err = validateFile(file);
+    if (err) { showError(err); return; }
+    selectedFile = file;
+    renderFileInfo(file);
+  }
+
+  // =========================================================================
+  // 이벤트 리스너
+  // =========================================================================
+
+  // -- 페이지 전체 드래그 기본 동작 차단 (드롭존 외부에서 파일 열림 방지) --
+  document.addEventListener('dragover',  (e) => e.preventDefault());
+  document.addEventListener('drop',      (e) => e.preventDefault());
+
+  // -- API 키 저장 --
+  saveKeyBtn.addEventListener('click', () => {
+    const val = apiKeyInput.value.trim();
+    // 마스킹 표시된 값(실제 키가 아님)이면 저장하지 않음
+    if (!val.startsWith('sk-or-')) {
+      const existingKey = loadApiKey();
+      if (existingKey) {
+        keyStatus.textContent = '이미 API 키가 저장되어 있습니다. 변경하려면 새 키 전체를 입력해주세요.';
+        keyStatus.className   = 'key-status ok';
+      } else {
+        keyStatus.textContent = "API 키는 'sk-or-' 로 시작해야 합니다. 새 키를 입력해주세요.";
+        keyStatus.className   = 'key-status err';
+        apiKeyInput.classList.remove('valid');
+        apiKeyInput.classList.add('invalid');
+      }
+      return;
+    }
+    try {
+      saveApiKey(val);
+      // 저장 후 마스킹 표시로 전환
+      apiKeyInput.value     = val.slice(0, 10) + '****' + val.slice(-4);
+      keyStatus.textContent = '저장되었습니다.';
+      keyStatus.className   = 'key-status ok';
+      apiKeyInput.classList.remove('invalid');
+      apiKeyInput.classList.add('valid');
+      updateSummarizeBtn();
+    } catch (e) {
+      keyStatus.textContent = e.message;
+      keyStatus.className   = 'key-status err';
+      apiKeyInput.classList.remove('valid');
+      apiKeyInput.classList.add('invalid');
+    }
+  });
+
+  // -- API 키 초기화 --
+  clearKeyBtn.addEventListener('click', () => {
+    localStorage.removeItem(STORAGE_KEY);
+    apiKeyInput.value     = '';
+    keyStatus.textContent = 'API 키가 초기화되었습니다.';
+    keyStatus.className   = 'key-status';
+    apiKeyInput.classList.remove('valid', 'invalid');
+    updateSummarizeBtn();
+  });
+
+  // -- 드롭존 클릭 --
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+
+  // -- 파일 input 변경 --
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) handleFileSelect(fileInput.files[0]);
+  });
+
+  // -- 드래그 앤 드롭 (dragleave 자식 요소 이동 시 강조 해제 방지) --
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragleave', (e) => {
+    // relatedTarget이 드롭존 내부 자식이면 강조 해제하지 않음
+    if (dropZone.contains(e.relatedTarget)) return;
+    dropZone.classList.remove('drag-over');
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  });
+
+  // -- 파일 제거 --
+  removeFileBtn.addEventListener('click', clearFile);
+
+  // -- 복사 버튼 (innerHTML이 아닌 innerText로 순수 텍스트만 복사) --
+  copyBtn.addEventListener('click', async () => {
+    const text = summaryOutput.innerText;
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = '복사됨!';
+      setTimeout(() => { copyBtn.textContent = '복사'; }, 2000);
+    } catch (_) {
+      showError('클립보드 복사에 실패했습니다.');
+    }
+  });
+
+  // -- 다시 요약 버튼 --
+  resetBtn.addEventListener('click', () => {
+    resultSection.style.display = 'none';
+    clearError();
+    clearFile();
+  });
+
+  // =========================================================================
+  // 메인 요약 플로우
+  // =========================================================================
+  summarizeBtn.addEventListener('click', async () => {
+    clearError();
+    const apiKey = loadApiKey();
+    if (!apiKey) {
+      showError('API 키를 먼저 저장해주세요.');
+      return;
+    }
+    if (!selectedFile) {
+      showError('PDF 파일을 선택해주세요.');
+      return;
+    }
+
+    // UI 잠금
+    summarizeBtn.disabled          = true;
+    resultSection.style.display    = 'none';
+    progressSection.style.display  = 'block';
+    setProgress(0, 'PDF 텍스트 추출 중...', '파일을 읽고 있습니다');
+
+    let extractedText = '';
+
+    try {
+      // [단계 1] PDF 텍스트 추출
+      extractedText = await extractTextFromPDF(selectedFile, (current, total) => {
+        const pct = Math.round((current / total) * 50); // 0~50%
+        setProgress(pct, `PDF 텍스트 추출 중... (${current}/${total} 페이지)`, '텍스트를 파싱하고 있습니다');
+      });
+
+      if (!extractedText.trim()) {
+        throw new Error(FILE_ERRORS.EXTRACT_FAILED);
+      }
+
+      // [단계 2] AI 요약 요청
+      setProgress(55, 'AI 요약 중...', `총 ${extractedText.length.toLocaleString()}자 → ${Math.min(extractedText.length, CONFIG.MAX_TEXT_LENGTH).toLocaleString()}자 전송`);
+
+      const summary = await summarizeWithAI(extractedText, apiKey);
+
+      setProgress(100, '완료!', '요약이 생성되었습니다');
+
+      // [단계 3] 결과 표시 (마크다운 렌더링)
+      summaryOutput.innerHTML = renderMarkdown(summary);
+      resultMeta.textContent  =
+        `원문 ${extractedText.length.toLocaleString()}자 중 ` +
+        `${Math.min(extractedText.length, CONFIG.MAX_TEXT_LENGTH).toLocaleString()}자 분석 · ` +
+        `모델: ${CONFIG.MODEL}`;
+
+      // 애니메이션 재실행을 위해 display 토글 후 강제 reflow
+      resultSection.style.display = 'none';
+      void resultSection.offsetHeight; // CSS 애니메이션 재시작을 위한 강제 reflow
+      resultSection.style.display = 'block';
+
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      progressSection.style.display = 'none';
+      summarizeBtn.disabled = false;
+    }
+  });
+
+  // =========================================================================
+  // 초기화: API 키가 없으면 기본 키를 자동 저장하고 마스킹 표시
+  // =========================================================================
+  function init() {
+    const saved = loadApiKey();
+    if (saved) {
+      apiKeyInput.value     = saved.slice(0, 10) + '****' + saved.slice(-4);
+      keyStatus.textContent = 'API 키가 설정되어 있습니다.';
+      keyStatus.className   = 'key-status ok';
+      apiKeyInput.classList.add('valid');
+    }
+    updateSummarizeBtn();
+  }
+
+  init();
+</script>
+</body>
+</html>
